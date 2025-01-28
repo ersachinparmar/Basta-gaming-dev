@@ -1,14 +1,13 @@
 import express from 'express';
 import bodyParser from 'body-parser';
-import authRoutes from './routes/authRoutes';
+import router from './routes'
 import { connectDB } from './utils/db';
 
 const app = express();
 
 app.use(bodyParser.json());
 
-app.use('/api/auth', authRoutes);
-
+app.use(router);
 connectDB();
 
 export default app;
