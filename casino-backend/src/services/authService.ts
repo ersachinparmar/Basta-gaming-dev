@@ -1,62 +1,93 @@
 import Player from '../models/player';
-import Role from '../models/role'; // Ensure Role model exists
+import Role from '../models/role';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { Types } from 'mongoose';
 
-export const register = async (data: any) => {
+interface RegistrationData {
+  username: string;
+  email: string;
+  password: string;
+  role_id: Types.ObjectId;
+  fullname: string;
+  patronymic: string;
+}
+
+interface LoginData {
+  email: string;
+  password: string;
+}
+
+export const register = async (data: RegistrationData) => {
   const { username, email, password, role_id, fullname, patronymic } = data;
 
-  if (!fullname || !patronymic) {
-    throw new Error('fullname and patronymic are required');
-  }
-
-  const roleExists = await Role.findById(role_id);
+  const roleExists = await Role.exists({ _id: role_id });
   if (!roleExists) {
-    throw new Error('Invalid role_id');
+    throw new Error('Invalid role specified');
   }
 
-  const existingPlayer = await Player.findOne({ email });
-  if (existingPlayer) {
-    throw new Error('Email already in use');
+  const existingUser = await Player.findOne({ $or: [{ email }, { username }] });
+  if (existingUser) {
+    throw new Error('Username or email already in use');
   }
 
-  // Hash password
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const hashedPassword = await bcrypt.hash(password, 12);
 
-  // Create new player
   const player = new Player({
     username,
     email,
     password_hash: hashedPassword,
     role_id,
     fullname,
-    patronymic,
+    patronymic
   });
 
   await player.save();
 
-  return { message: 'Player registered successfully' };
+  return player;
 };
 
-export const login = async (data: any) => {
+export const login = async (data: LoginData) => {
   const { email, password } = data;
 
-  const player = await Player.findOne({ email });
+  const player = await Player.findOne({ email })
+    .select('+password_hash')
+    .populate('role_id', 'name permissions');
+
   if (!player) {
-    throw new Error('Invalid email or password');
+    throw new Error('Invalid credentials');
   }
 
   const isMatch = await bcrypt.compare(password, player.password_hash);
   if (!isMatch) {
-    throw new Error('Invalid email or password');
+    throw new Error('Invalid credentials');
   }
 
-  // Generate JWT token
+  player.last_login = new Date();
+  await player.save();
+
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT secret not configured');
+  }
+
   const token = jwt.sign(
-    { id: player._id, role_id: player.role_id },
-    process.env.JWT_SECRET as string,
-    { expiresIn: '1h' },
+    {
+      id: player._id,
+      role: player.role_id,
+      status: player.status
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '8h' }
   );
 
-  return { token };
+  return {
+    token,
+    user: {
+      id: player._id,
+      username: player.username,
+      email: player.email,
+      role: player.role_id,
+      status: player.status
+    }
+  };
 };
